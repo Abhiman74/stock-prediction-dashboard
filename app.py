@@ -4,39 +4,55 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="Stock Dashboard", layout="wide")
+st.set_page_config(page_title="AI Stock Dashboard", layout="wide")
+
+# 🎛️ Sidebar
+st.sidebar.title("⚙️ Settings")
+
+ticker = st.sidebar.text_input("Enter Stock Ticker", "AAPL")
+start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
+end_date = st.sidebar.date_input("End Date", pd.to_datetime("2024-01-01"))
 
 st.title("📈 AI Stock Prediction Dashboard")
 
-# Input
-ticker = st.text_input("Enter Stock Ticker", "AAPL")
-
 # Fetch data
-data = yf.download(ticker, start="2020-01-01", end="2024-01-01")
+data = yf.download(ticker, start=start_date, end=end_date)
+
+# Fix multi-index columns (important)
+if isinstance(data.columns, pd.MultiIndex):
+    data.columns = data.columns.get_level_values(0)
 
 if data.empty:
     st.error("No data found. Try AAPL, TSLA, BTC-USD")
 else:
-    st.subheader("Raw Data")
-    st.write(data.tail())
+    # 📊 Layout
+    col1, col2 = st.columns(2)
+
+    # 📄 Raw Data
+    with col1:
+        st.subheader("📄 Raw Data")
+        st.write(data.tail())
+
+    # 📈 Price Chart
+    with col2:
+        st.subheader("📈 Closing Price")
+        st.line_chart(data["Close"])
 
     # 📊 Moving Averages
-    data["MA50"] = data["Close"].rolling(window=50).mean()
-    data["MA200"] = data["Close"].rolling(window=200).mean()
+    data["MA50"] = data["Close"].rolling(50).mean()
+    data["MA200"] = data["Close"].rolling(200).mean()
 
     st.subheader("📊 Moving Averages")
-    st.line_chart(data[["Close", "MA50", "MA200"]])
+    st.line_chart(data[["Close", "MA50", "MA200"]].dropna())
 
-    # 🟢 Buy/Sell Signals
+    # 🟢 Signals
     data["Signal"] = 0
-    data.loc[50:, "Signal"] = (
-        data["MA50"][50:] > data["MA200"][50:]
-    ).astype(int)
+    data["Signal"] = (data["MA50"] > data["MA200"]).astype(int)
 
-    st.subheader("🟢 Buy/Sell Signals (1 = Buy, 0 = Sell)")
+    st.subheader("🟢 Buy/Sell Signals")
     st.write(data[["Close", "MA50", "MA200", "Signal"]].tail())
 
-    # 🤖 Simple Prediction
+    # 🤖 Prediction
     data = data.dropna()
 
     X = np.arange(len(data)).reshape(-1, 1)
