@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from collections import defaultdict
 
 st.set_page_config(page_title="AI Stock Dashboard", layout="wide")
 
@@ -13,8 +14,6 @@ if "logged_in" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
-if "watchlist" not in st.session_state:
-    st.session_state.watchlist = []
 
 # ---------- FAKE DATABASE ----------
 
@@ -47,7 +46,7 @@ if not st.session_state.logged_in:
             else:
                 st.error("Invalid credentials ❌")
 
-        except:
+        except Exception:
             st.error("⚠️ Backend not running")
 
     st.stop()
@@ -73,15 +72,151 @@ ticker = st.sidebar.text_input(
 # ---------- WATCHLIST ----------
 st.sidebar.subheader("⭐ Watchlist")
 
+# Add to watchlist (DB)
 if st.sidebar.button("Add to Watchlist"):
-    if ticker not in st.session_state.watchlist:
-        st.session_state.watchlist.append(ticker)
+    try:
+        requests.post(
+            "http://127.0.0.1:8000/watchlist/add",
+            params={
+                "username": st.session_state.user,
+                "ticker": ticker
+            }
+        )
+        st.sidebar.success("Added!")
+    except Exception:
+        st.sidebar.error("Failed to add")
 
-if st.sidebar.button("Clear Watchlist"):
-    st.session_state.watchlist = []
+# Fetch watchlist from DB
+try:
+    res = requests.get(
+        f"http://127.0.0.1:8000/watchlist/{st.session_state.user}"
+    )
 
-for stock in st.session_state.watchlist:
-    st.sidebar.write(f"• {stock}")
+    watchlist = res.json()
+
+    for stock in watchlist:
+        st.sidebar.write(f"• {stock}")
+
+except Exception:
+    st.sidebar.error("Failed to load watchlist")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("💼 Portfolio")
+
+buy_price = st.sidebar.number_input("Buy Price", min_value=0.0, step=1.0)
+quantity = st.sidebar.number_input("Quantity", min_value=1.0, step=1.0)
+
+# Add to portfolio
+if st.sidebar.button("Add to Portfolio"):
+    try:
+        requests.post(
+            "http://127.0.0.1:8000/portfolio/add",
+            params={
+                "username": st.session_state.user,
+                "ticker": ticker,
+                "buy_price": buy_price,
+                "quantity": quantity
+            }
+        )
+        st.sidebar.success("Added to portfolio!")
+    except Exception:
+        st.sidebar.error("Failed to add portfolio item")
+
+# Fetch portfolio
+try:
+    res = requests.get(
+        f"http://127.0.0.1:8000/portfolio/{st.session_state.user}"
+    )
+
+    portfolio = res.json()
+    
+    grouped = defaultdict(lambda: {"total_qty":0, "total_cost":0})
+
+    for item in portfolio:
+        qty = float(item.get("quantity", 1))
+        grouped[item["ticker"]]["total_qty"] += qty
+        grouped[item["ticker"]]["total_cost"] += item["buy_price"] * qty
+
+    for ticker_key, data in grouped.items():
+        try:
+            res_price = requests.get(f"http://127.0.0.1:8000/stock/{ticker_key}")
+            price_data = res_price.json()
+
+            current_price = price_data.get("latest_price", 0)
+
+            avg_price = data["total_cost"] / data["total_qty"]
+            profit = (current_price - avg_price) * data["total_qty"]
+
+            col1, col2 = st.sidebar.columns([3,1])
+
+            col1.write(
+                f"{ticker_key} | Qty: {data['total_qty']} | Avg: {round(avg_price,2)} | P/L: {round(profit,2)}"
+            )
+
+            if col2.button("❌", key=f"delete_{ticker_key}"):
+                try:
+                    requests.post(
+                        "http://127.0.0.1:8000/portfolio/delete",
+                        params={
+                            "username": st.session_state.user,
+                            "ticker": ticker_key
+                        }
+                    )
+                    st.success("Deleted successfully")
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Delete error: {e}")
+
+        except Exception:
+            st.sidebar.write(ticker_key)
+
+    # ---------- PORTFOLIO ANALYTICS ----------
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📊 Portfolio Analytics")
+
+    total_invested = 0
+    total_current = 0
+    total_profit = 0
+
+    for ticker_key, data in grouped.items():
+        try:
+            res_price = requests.get(f"http://127.0.0.1:8000/stock/{ticker_key}")
+            price_data = res_price.json()
+
+            current_price = price_data.get("latest_price", 0)
+
+            qty = data["total_qty"]
+            avg_price = data["total_cost"] / qty
+
+            invested = avg_price * qty
+            current = current_price * qty
+            profit = current - invested
+
+            total_invested += invested
+            total_current += current
+            total_profit += profit
+
+        except Exception:
+            continue
+
+    # Returns %
+    if total_invested > 0:
+        returns = (total_profit / total_invested) * 100
+    else:
+        returns = 0
+
+    st.sidebar.write(f"💰 Invested: {round(total_invested,2)}")
+    st.sidebar.write(f"📈 Current: {round(total_current,2)}")
+    st.sidebar.write(f"📊 Profit: {round(total_profit,2)}")
+    st.sidebar.write(f"📉 Return: {round(returns,2)}%")
+
+    try:
+        st.sidebar.bar_chart([total_invested, total_current])
+    except Exception:
+        pass
+
+except Exception:
+    st.sidebar.error("Failed to load portfolio")
 
 # ---------- OPTIONS ----------
 st.sidebar.markdown("---")
@@ -233,5 +368,5 @@ try:
         else:
             st.error("📉 SELL SIGNAL\n\n" + data["explanation"])
 
-except:
+except Exception:
     st.error("⚠️ Backend not running")

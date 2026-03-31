@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.database import SessionLocal, engine
 from backend.db_models import User, Base
 from backend.auth_utils import hash_password, verify_password
+from backend.db_models import Watchlist, Portfolio
 
 app = FastAPI()
 
@@ -51,6 +52,76 @@ def login(username: str, password: str, db: Session = Depends(get_db)):
         "message": "Login successful",
         "username": user.username
     }
+
+# ---------- WATCHLIST ----------
+
+@app.post("/watchlist/add")
+def add_watchlist(username: str, ticker: str, db: Session = Depends(get_db)):
+    item = Watchlist(username=username, ticker=ticker)
+
+    db.add(item)
+    db.commit()
+
+    return {"message": "Added to watchlist"}
+
+
+@app.get("/watchlist/{username}")
+def get_watchlist(username: str, db: Session = Depends(get_db)):
+    items = db.query(Watchlist).filter(Watchlist.username == username).all()
+
+    return [item.ticker for item in items]
+
+# ---------- PORTFOLIO ----------
+
+@app.post("/portfolio/add")
+def add_portfolio(
+    username: str,
+    ticker: str,
+    buy_price: float,
+    quantity: float,   # 🔥 ADD THIS
+    db: Session = Depends(get_db)
+):
+    print("DEBUG:", username, ticker, buy_price, quantity)
+    item = Portfolio(
+        username=username,
+        ticker=ticker,
+        buy_price=buy_price,
+        quantity=quantity   # 🔥 ADD THIS
+    )
+
+    db.add(item)
+    db.commit()
+
+    return {"message": "Added to portfolio"}
+
+@app.post("/portfolio/delete")
+def delete_portfolio(username: str, ticker: str, db: Session = Depends(get_db)):
+    items = db.query(Portfolio).filter(
+        Portfolio.username == username,
+        Portfolio.ticker == ticker
+    ).all()
+
+    if not items:
+        return {"error": "Item not found"}
+
+    for item in items:
+        db.delete(item)
+
+    db.commit()
+
+    return {"message": "Deleted all entries"}
+@app.get("/portfolio/{username}")
+def get_portfolio(username: str, db: Session = Depends(get_db)):
+    items = db.query(Portfolio).filter(Portfolio.username == username).all()
+
+    return [
+        {
+            "ticker": item.ticker,
+            "buy_price": item.buy_price,
+            "quantity": item.quantity
+        }
+        for item in items
+    ]
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
     data = yf.download(ticker, start="2020-01-01", end="2024-01-01")
