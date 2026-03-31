@@ -1,12 +1,56 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 import yfinance as yf
 import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Input
 from sklearn.preprocessing import MinMaxScaler
+from sqlalchemy.orm import Session
+from backend.database import SessionLocal, engine
+from backend.db_models import User, Base
+from backend.auth_utils import hash_password, verify_password
 
 app = FastAPI()
 
+# Create DB tables
+Base.metadata.create_all(bind=engine)
+# DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@app.post("/signup")
+def signup(username: str, password: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == username).first()
+
+    if user:
+        return {"error": "User already exists"}
+
+    new_user = User(
+        username=username,
+        password=hash_password(password)
+    )
+
+    db.add(new_user)
+    db.commit()
+
+    return {"message": "User created successfully"}
+
+
+@app.post("/login")
+def login(username: str, password: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == username).first()
+
+    if not user or not verify_password(password, user.password):
+        return {"error": "Invalid credentials"}
+
+    return {
+        "message": "Login successful",
+        "username": user.username
+    }
 @app.get("/stock/{ticker}")
 def get_stock(ticker: str):
     data = yf.download(ticker, start="2020-01-01", end="2024-01-01")
