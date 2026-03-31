@@ -22,6 +22,7 @@ def get_stock(ticker: str):
     data["MA50"] = data["Close"].rolling(50).mean()
     data["MA200"] = data["Close"].rolling(200).mean()
     data["Signal"] = (data["MA50"] > data["MA200"]).astype(int)
+
     # ---------- RSI ----------
     delta = data["Close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -47,23 +48,54 @@ def get_stock(ticker: str):
     future = np.array([[len(data) + i] for i in range(10)])
     predictions = model.predict(future)
 
-    # ---------- AI EXPLANATION ----------
-    signal = int(data["Signal"].iloc[-1])
+    # ---------- SMART SIGNAL ----------
+    latest = data.iloc[-1]
 
-    if signal == 1:
-        explanation = "MA50 is above MA200 → Uptrend detected → BUY signal 📈"
+    score = 0
+    reasons = []
+
+    # MA trend
+    if latest["MA50"] > latest["MA200"]:
+        score += 1
+        reasons.append("Uptrend (MA50 > MA200)")
     else:
-        explanation = "MA50 is below MA200 → Downtrend detected → SELL signal 📉"
+        score -= 1
+        reasons.append("Downtrend (MA50 < MA200)")
 
+    # RSI
+    if latest["RSI"] < 30:
+        score += 1
+        reasons.append("RSI oversold (<30)")
+    elif latest["RSI"] > 70:
+        score -= 1
+        reasons.append("RSI overbought (>70)")
+
+    # MACD
+    if latest["MACD"] > latest["Signal_Line"]:
+        score += 1
+        reasons.append("MACD bullish crossover")
+    else:
+        score -= 1
+        reasons.append("MACD bearish crossover")
+
+    # Final decision
+    final_signal = 1 if score > 0 else 0
+
+    # Confidence (0 to 1)
+    confidence = abs(score) / 3
+
+    # Explanation
+    explanation = f"Decision Score: {score}/3 → " + " | ".join(reasons)
     # ---------- CLEAN DATA FOR JSON ----------
     data = data.replace([np.inf, -np.inf], np.nan)
     data = data.fillna(0)
 
     # ---------- RETURN ----------
     return {
-    "latest_price": float(data["Close"].iloc[-1]),
-    "signal": signal,
-    "prediction": [float(x) for x in predictions],
-    "explanation": explanation,
-    "history": data.reset_index().to_dict(orient="list")
-}
+        "latest_price": float(data["Close"].iloc[-1]),
+        "signal": final_signal,
+        "confidence": float(confidence),
+        "prediction": [float(x) for x in predictions],
+        "explanation": explanation,
+        "history": data.reset_index().to_dict(orient="list")
+    }

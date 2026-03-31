@@ -176,9 +176,9 @@ try:
         st.subheader("🧠 AI Insight")
 
         if data["signal"] == 1:
-            st.success(data["explanation"])
+            st.success("📈 BUY SIGNAL\n\n" + data["explanation"])
         else:
-            st.error(data["explanation"])
+            st.error("📉 SELL SIGNAL\n\n" + data["explanation"])
 
 except:
     st.error("⚠️ Backend not running")
