@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 import yfinance as yf
 import numpy as np
-from sklearn.linear_model import LinearRegression
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Input
+from sklearn.preprocessing import MinMaxScaler
 
 app = FastAPI()
 
@@ -38,15 +40,53 @@ def get_stock(ticker: str):
     data["MACD"] = exp1 - exp2
     data["Signal_Line"] = data["MACD"].ewm(span=9, adjust=False).mean()
 
-    # ---------- ML ----------
-    X = np.arange(len(data)).reshape(-1, 1)
-    y = data["Close"].values
+    # ---------- LSTM MODEL ----------
+    close_data = data["Close"].values.reshape(-1, 1)
 
-    model = LinearRegression()
-    model.fit(X, y)
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(close_data)
 
-    future = np.array([[len(data) + i] for i in range(10)])
-    predictions = model.predict(future)
+    sequence_length = 60
+    X_lstm, y_lstm = [], []
+
+    for i in range(sequence_length, len(scaled_data)):
+        X_lstm.append(scaled_data[i-sequence_length:i])
+        y_lstm.append(scaled_data[i])
+
+    X_lstm = np.array(X_lstm)
+    y_lstm = np.array(y_lstm)
+
+    # ---------- MODEL ----------
+    model = Sequential([
+        Input(shape=(X_lstm.shape[1], 1)),
+        LSTM(50, return_sequences=True),
+        LSTM(50),
+        Dense(25),
+        Dense(1)
+    ])
+
+    model.compile(optimizer="adam", loss="mean_squared_error")
+
+    # Train
+    model.fit(X_lstm, y_lstm, epochs=3, batch_size=32, verbose=0)
+
+    # ---------- FUTURE PREDICTION ----------
+    last_sequence = scaled_data[-sequence_length:]
+    future_preds = []
+
+    current_sequence = last_sequence.copy()
+
+    for _ in range(10):
+        reshaped = current_sequence.reshape(1, sequence_length, 1)
+        pred = model.predict(reshaped, verbose=0)
+
+        future_preds.append(pred[0][0])
+
+        current_sequence = np.vstack([current_sequence[1:], pred])
+
+    # Convert back
+    future_preds = scaler.inverse_transform(np.array(future_preds).reshape(-1, 1))
+    predictions = future_preds.flatten().tolist()
 
     # ---------- SMART SIGNAL ----------
     latest = data.iloc[-1]
@@ -54,7 +94,7 @@ def get_stock(ticker: str):
     score = 0
     reasons = []
 
-    # MA trend
+    # MA
     if latest["MA50"] > latest["MA200"]:
         score += 1
         reasons.append("Uptrend (MA50 > MA200)")
@@ -78,23 +118,42 @@ def get_stock(ticker: str):
         score -= 1
         reasons.append("MACD bearish crossover")
 
-    # Final decision
     final_signal = 1 if score > 0 else 0
 
-    # Confidence (0 to 1)
+    # ---------- CONFIDENCE ----------
     confidence = abs(score) / 3
 
-    # Explanation
-    explanation = f"Decision Score: {score}/3 → " + " | ".join(reasons)
-    # ---------- CLEAN DATA FOR JSON ----------
+    current_price = float(data["Close"].iloc[-1])
+    predicted_price = float(predictions[-1])
+
+    price_confidence = abs(predicted_price - current_price) / current_price
+
+    if price_confidence < 0.02:
+        confidence_level = "Low"
+    elif price_confidence < 0.05:
+        confidence_level = "Medium"
+    else:
+        confidence_level = "High"
+
+    # ---------- EXPLANATION ----------
+    if final_signal == 1 and confidence_level != "Low":
+        explanation = f"Strong BUY 📈 | Confidence: {confidence_level} | " + " | ".join(reasons)
+    elif final_signal == 1:
+        explanation = f"Weak BUY ⚠️ | Confidence: {confidence_level}"
+    elif final_signal == 0 and confidence_level != "Low":
+        explanation = f"Strong SELL 📉 | Confidence: {confidence_level} | " + " | ".join(reasons)
+    else:
+        explanation = f"Weak SELL ⚠️ | Confidence: {confidence_level}"
+
+    # ---------- CLEAN DATA ----------
     data = data.replace([np.inf, -np.inf], np.nan)
     data = data.fillna(0)
 
     # ---------- RETURN ----------
     return {
-        "latest_price": float(data["Close"].iloc[-1]),
+        "latest_price": current_price,
         "signal": final_signal,
-        "confidence": float(confidence),
+        "confidence": confidence_level,
         "prediction": [float(x) for x in predictions],
         "explanation": explanation,
         "history": data.reset_index().to_dict(orient="list")
