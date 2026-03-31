@@ -17,10 +17,7 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
 # ---------- FAKE DATABASE ----------
-users = {
-    "admin": "1234",
-    "abhiman": "pass"
-}
+
 
 # ---------- LOGIN ----------
 if not st.session_state.logged_in:
@@ -31,18 +28,37 @@ if not st.session_state.logged_in:
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if username in users and users[username] == password:
-            st.session_state.logged_in = True
-            st.session_state.user = username
-            st.success("Logged in successfully")
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
+        try:
+            res = requests.post(
+                "http://127.0.0.1:8000/login",
+                params={
+                    "username": username,
+                    "password": password
+                }
+            )
+
+            data = res.json()
+
+            if "error" not in data:
+                st.session_state.logged_in = True
+                st.session_state.user = data["username"]
+                st.success("Logged in successfully 🚀")
+                st.rerun()
+            else:
+                st.error("Invalid credentials ❌")
+
+        except:
+            st.error("⚠️ Backend not running")
 
     st.stop()
 
 # ---------- SIDEBAR ----------
 st.sidebar.title("⚙️ Settings")
+
+if st.sidebar.button("Logout"):
+    st.session_state.logged_in = False
+    st.session_state.user = None
+    st.rerun()
 
 # ---------- QUICK SELECT ----------
 popular = ["AAPL", "TSLA", "MSFT", "BTC-USD", "ETH-USD"]
