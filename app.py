@@ -1,123 +1,184 @@
 import streamlit as st
-import yfinance as yf
+import requests
 import pandas as pd
-import numpy as np
-from sklearn.linear_model import LinearRegression
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="AI Stock Dashboard", layout="wide")
 
-# 🎛️ Sidebar
+# ---------- SIDEBAR ----------
 st.sidebar.title("⚙️ Settings")
+# Quick select (optional)
+popular = ["AAPL", "TSLA", "MSFT", "BTC-USD"]
+choice = st.sidebar.selectbox("Quick Select", popular)
 
-ticker = st.sidebar.selectbox(
-    "Select Asset",
-    ["AAPL", "TSLA", "GOOGL", "MSFT", "BTC-USD", "ETH-USD", "RELIANCE.NS"]
-)
+# Custom input (main)
+ticker = st.sidebar.text_input(
+    "Or enter any stock / crypto",
+    value=choice
+).upper()
 
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("2024-01-01"))
+st.title("📈 AI Stock Dashboard (Pro)")
+st.caption("Full Stack • FastAPI + AI Insights 🚀")
 
-st.title("📈 AI Stock Prediction Dashboard")
-st.markdown("### Real-time stock analysis with AI-powered insights 🚀")
+# ---------- API ----------
+try:
+    res = requests.get(f"http://127.0.0.1:8000/stock/{ticker}")
+    data = res.json()
 
-# 📊 Fetch data
-data = yf.download(ticker, start=start_date, end=end_date)
+    if "error" in data:
+        st.error(data["error"])
 
-# Fix multi-index issue
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = data.columns.get_level_values(0)
-
-if data.empty:
-    st.error("No data found.")
-else:
-    # 📌 Metrics
-    current_price = data["Close"].iloc[-1]
-    prev_price = data["Close"].iloc[-2]
-
-    change = current_price - prev_price
-    percent_change = (change / prev_price) * 100
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("💰 Current Price", f"${current_price:.2f}")
-    col2.metric("📊 Change", f"{change:.2f}", f"{percent_change:.2f}%")
-    col3.metric("📦 Volume", int(data["Volume"].iloc[-1]))
-
-    # 📈 Price chart
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📄 Raw Data")
-        st.write(data.tail())
-
-    with col2:
-        st.subheader("📈 Closing Price")
-        st.line_chart(data["Close"])
-
-    # 📊 Moving averages
-    data["MA50"] = data["Close"].rolling(50).mean()
-    data["MA200"] = data["Close"].rolling(200).mean()
-
-    st.subheader("📊 Moving Averages")
-    st.line_chart(data[["Close", "MA50", "MA200"]].dropna())
-
-    # 🟢 Signals
-    data["Signal"] = (data["MA50"] > data["MA200"]).astype(int)
-
-    st.subheader("🟢 Buy/Sell Signals")
-    st.write(data[["Close", "MA50", "MA200", "Signal"]].tail())
-
-    # 🧠 Trend Insight
-    if data["MA50"].iloc[-1] > data["MA200"].iloc[-1]:
-        st.success("📈 Bullish Trend (Buy Signal)")
     else:
-        st.error("📉 Bearish Trend (Sell Signal)")
+        # ---------- METRICS ----------
+        col1, col2 = st.columns(2)
 
-    # 📊 Candlestick Chart
-    st.subheader("🕯️ Candlestick Chart")
+        col1.metric("💰 Price", round(data["latest_price"], 2))
 
-    fig = go.Figure(data=[go.Candlestick(
-        x=data.index,
-        open=data['Open'],
-        high=data['High'],
-        low=data['Low'],
-        close=data['Close']
-    )])
+        signal_text = "BUY 📈" if data["signal"] == 1 else "SELL 📉"
+        col2.metric("Signal", signal_text)
 
-    fig.update_layout(
-        xaxis_rangeslider_visible=False,
-        template="plotly_dark"
-    )
+        st.markdown("---")
 
-    st.plotly_chart(fig, use_container_width=True)
+        # ---------- DATA ----------
+        df = pd.DataFrame(data["history"])
 
-    # 🤖 Prediction
-    data = data.dropna()
+        # ---------- MAIN CHART ----------
+        st.subheader("📊 Smart Stock Chart")
 
-    X = np.arange(len(data)).reshape(-1, 1)
-    y = data["Close"].values
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.7, 0.3]
+        )
 
-    model = LinearRegression()
-    model.fit(X, y)
+        st.subheader("📉 RSI Indicator")
 
-    future = np.array([[len(data) + i] for i in range(10)])
-    predictions = model.predict(future)
+        fig_rsi = go.Figure()
 
-    future_dates = pd.date_range(start=data.index[-1], periods=10)
+        fig_rsi.add_trace(go.Scatter(
+            y=df["RSI"],
+            name="RSI",
+            line=dict(color="purple")
+        ))
 
-    pred_df = pd.DataFrame({
-        "Date": future_dates,
-        "Predicted Price": predictions
-    })
+        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
 
-    st.subheader("🤖 Next 10 Days Prediction")
-    st.line_chart(pred_df.set_index("Date"))
+        fig_rsi.update_layout(template="plotly_dark")
 
-    # 📥 Download button
-    st.download_button(
-        label="📥 Download Data as CSV",
-        data=data.to_csv(),
-        file_name=f"{ticker}_data.csv",
-        mime="text/csv"
-    )
+        st.plotly_chart(fig_rsi, use_container_width=True)
+
+        st.subheader("📊 MACD Indicator")
+
+        fig_macd = go.Figure()
+
+        fig_macd.add_trace(go.Scatter(
+            y=df["MACD"],
+            name="MACD",
+            line=dict(color="blue")
+        ))
+
+        fig_macd.add_trace(go.Scatter(
+            y=df["Signal_Line"],
+            name="Signal Line",
+            line=dict(color="orange")
+        ))
+
+        fig_macd.update_layout(template="plotly_dark")
+
+        st.plotly_chart(fig_macd, use_container_width=True)
+
+        # ---------- CANDLESTICK ----------
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name="Price"
+        ), row=1, col=1)
+
+        # ---------- MOVING AVERAGES ----------
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["MA50"],
+            name="MA50",
+            line=dict(color="blue")
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["MA200"],
+            name="MA200",
+            line=dict(color="orange")
+        ), row=1, col=1)
+
+        # ---------- BUY/SELL ----------
+        buy_points = df[df["Signal"] == 1]
+        sell_points = df[df["Signal"] == 0]
+
+        fig.add_trace(go.Scatter(
+            x=buy_points.index,
+            y=buy_points["Close"],
+            mode="markers",
+            marker=dict(color="green", size=7),
+            name="Buy"
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=sell_points.index,
+            y=sell_points["Close"],
+            mode="markers",
+            marker=dict(color="red", size=7),
+            name="Sell"
+        ), row=1, col=1)
+
+        # ---------- PREDICTION ----------
+        future_x = list(range(len(df), len(df) + len(data["prediction"])))
+
+        fig.add_trace(go.Scatter(
+            x=future_x,
+            y=data["prediction"],
+            name="Prediction",
+            line=dict(color="cyan", dash="dash")
+        ), row=1, col=1)
+
+        # ---------- VOLUME ----------
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=df["Volume"],
+            name="Volume",
+            opacity=0.4
+        ), row=2, col=1)
+
+        # ---------- LAYOUT ----------
+        fig.update_layout(
+            template="plotly_dark",
+            height=750,
+            title="📊 AI Stock Analysis",
+            xaxis_rangeslider_visible=False
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ---------- AI PREDICTION (SMOOTH VIEW) ----------
+        st.subheader("🤖 AI Prediction Trend")
+
+        history_close = df["Close"].tolist()
+        full_series = history_close + data["prediction"]
+
+        st.line_chart(full_series)
+
+        # ---------- AI EXPLANATION ----------
+        st.subheader("🧠 AI Insight")
+
+        if data["signal"] == 1:
+            st.success(data["explanation"])
+        else:
+            st.error(data["explanation"])
+
+except:
+    st.error("⚠️ Backend not running")
